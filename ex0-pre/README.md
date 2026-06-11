@@ -47,6 +47,8 @@ ex0-pre/
 │   ├── config.py       #   TrainConfig dataclass (all defaults)
 │   ├── data.py         #   vocab, problem generation, AdditionDataset
 │   ├── model.py        #   minimal GPT: CausalSelfAttention → MLP → Block → GPT
+│   ├── models/         #   --model options, one file each: nano (default, from
+│   │                   #   scratch) + pretrained HF models via hf.py adapter
 │   ├── evaluate.py     #   exact-match accuracy
 │   ├── checkpoint.py   #   run tags, save/load/prune
 │   ├── tracker.py      #   W&B + MLflow wrapper
