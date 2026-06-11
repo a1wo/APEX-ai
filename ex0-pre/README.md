@@ -53,7 +53,6 @@ ex0-pre/
 │   └── monitor.py      #   SystemMonitor (psutil + powermetrics)
 ├── scripts/            # one-liners
 │   ├── train.sh        #   scripts/train.sh --reverse --pad …
-│   ├── monitor.sh      #   live metrics (sudo for power/thermal)
 │   ├── mlflow.sh       #   open MLflow UI on ./mlruns
 │   ├── wandb.sh        #   verify W&B login, open dashboard
 │   └── clear_checkpoints.sh  # delete all checkpoints (with confirmation)

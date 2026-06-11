@@ -7,6 +7,6 @@ __pycache__/
 checkpoints/
 mlruns/
 mlartifacts/
-mlflow.db
+mlflow.db*
 wandb/
 logs/
