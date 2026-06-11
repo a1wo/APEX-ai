@@ -131,8 +131,10 @@ Open [wandb.ai](https://wandb.ai) → project **gpt-addition** to see:
 
 ```bash
 python train.py                   # metrics → ./mlflow.db, artifacts → ./mlruns/
-scripts/mlflow.sh                 # open http://localhost:5000
+scripts/mlflow.sh                 # open http://127.0.0.1:5001
 ```
+
+> ⚠️ Don't use `localhost:5000` — macOS AirPlay Receiver squats on that port and serves an empty 403, which looks exactly like "my runs are missing". The script uses port 5001.
 
 The MLflow UI lets you:
 - Filter runs by `reverse_c`, `ndigits`, etc.
