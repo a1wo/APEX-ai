@@ -130,50 +130,53 @@ def train(cfg: TrainConfig) -> GPT:
     model.train()
     loss_accum = 0.0
 
-    for step in range(start_step, cfg.max_iters):
-        current_lr = get_lr(step)
-        for g in optimizer.param_groups:
-            g["lr"] = current_lr
+    try:
+        for step in range(start_step, cfg.max_iters):
+            current_lr = get_lr(step)
+            for g in optimizer.param_groups:
+                g["lr"] = current_lr
 
-        try:
-            x, y = next(data_iter)
-        except StopIteration:
-            data_iter = iter(loader)
-            x, y     = next(data_iter)
-        x, y = x.to(device), y.to(device)
+            try:
+                x, y = next(data_iter)
+            except StopIteration:
+                data_iter = iter(loader)
+                x, y     = next(data_iter)
+            x, y = x.to(device), y.to(device)
 
-        _, loss = model(x, y)
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
-        loss_accum += loss.item()
+            _, loss = model(x, y)
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            loss_accum += loss.item()
 
-        log({"train/loss": loss.item(), "train/lr": current_lr}, step=step)
+            log({"train/loss": loss.item(), "train/lr": current_lr}, step=step)
 
-        # ── Eval ──────────────────────────────────────────────────────────────
-        if step % cfg.eval_every == 0 or step == cfg.max_iters - 1:
-            avg_loss = loss_accum / cfg.eval_every if step > start_step else loss.item()
-            loss_accum = 0.0
-            acc = evaluate(model, ndigits=cfg.ndigits, device=device,
-                           reverse_c=cfg.reverse_c, pad_c=cfg.pad_c)
-            print(f"step {step:6d} | loss {avg_loss:.4f} | acc {acc:.3f}")
-            log({"eval/loss": avg_loss, "eval/accuracy": acc}, step=step)
+            # ── Eval ──────────────────────────────────────────────────────────
+            if step % cfg.eval_every == 0 or step == cfg.max_iters - 1:
+                avg_loss = loss_accum / cfg.eval_every if step > start_step else loss.item()
+                loss_accum = 0.0
+                acc = evaluate(model, ndigits=cfg.ndigits, device=device,
+                               reverse_c=cfg.reverse_c, pad_c=cfg.pad_c)
+                print(f"step {step:6d} | loss {avg_loss:.4f} | acc {acc:.3f}")
+                log({"eval/loss": avg_loss, "eval/accuracy": acc}, step=step)
 
-        # ── Checkpoint ────────────────────────────────────────────────────────
-        if (step + 1) % cfg.epoch_size == 0 or step == cfg.max_iters - 1:
-            epoch_num = (step + 1) // cfg.epoch_size
-            path = ckpt.epoch_path(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c, epoch_num)
-            ckpt.save(path, step=step, epoch=epoch_num, reverse_c=cfg.reverse_c,
-                      run_config=run_config, model=model, optimizer=optimizer, gpt_cfg=gpt_cfg)
-            ckpt.prune(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c, keep=cfg.keep_checkpoints)
-            tracker.log_artifact(path)
-            print(f"  → checkpoint: {path}")
+            # ── Checkpoint ────────────────────────────────────────────────────
+            if (step + 1) % cfg.epoch_size == 0 or step == cfg.max_iters - 1:
+                epoch_num = (step + 1) // cfg.epoch_size
+                path = ckpt.epoch_path(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c, epoch_num)
+                ckpt.save(path, step=step, epoch=epoch_num, reverse_c=cfg.reverse_c,
+                          run_config=run_config, model=model, optimizer=optimizer, gpt_cfg=gpt_cfg)
+                ckpt.prune(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c, keep=cfg.keep_checkpoints)
+                tracker.log_artifact(path)
+                print(f"  → checkpoint: {path}")
+    finally:
+        # ── Cleanup ── runs on Ctrl-C too, so trackers close the run instead of
+        # leaving it stuck as RUNNING in the MLflow UI
+        if monitor:
+            monitor.stop()
+        tracker.finish()
 
-    # ── Cleanup ───────────────────────────────────────────────────────────────
-    if monitor:
-        monitor.stop()
-    tracker.finish()
     print("\nDone.")
     return model
 
