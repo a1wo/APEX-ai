@@ -63,14 +63,14 @@ wandb login
 
 ### Basic training
 ```bash
-python train_addition.py
+python train.py
 ```
 
 ### Compare reversed vs forward digit order
 ```bash
 # Run both — they write to separate checkpoint files (_rev vs _fwd)
-python train_addition.py                 # reversed (default, easier for the model)
-python train_addition.py --no_reverse    # forward  (harder — requires implicit carry lookahead)
+python train.py                 # reversed (default, easier for the model)
+python train.py --no_reverse    # forward  (harder — requires implicit carry lookahead)
 ```
 
 ### Key flags
@@ -78,6 +78,8 @@ python train_addition.py --no_reverse    # forward  (harder — requires implici
 |------|---------|---------|
 | `--ndigits N` | `3` | operand size; try 1, 2, 3 |
 | `--max_iters N` | `100_000` | total training steps |
+| `--batch_size N` | `128` | batch size |
+| `--lr F` | `3e-4` | learning rate |
 | `--epoch_size N` | `5_000` | steps between checkpoints |
 | `--keep_checkpoints N` | `3` | how many recent checkpoints to keep |
 | `--no_reverse` | off | predict c left-to-right |
@@ -128,6 +130,44 @@ Checkpoint files follow the same tag so the two experiments never overwrite each
 checkpoints/addition_3digit_rev_epoch0001.pt
 checkpoints/addition_3digit_fwd_epoch0001.pt
 ```
+
+---
+
+## Hardware monitoring
+
+System metrics are collected automatically in a background thread and logged alongside training metrics.
+
+### What gets logged
+
+| Metric | Source | Requires |
+|--------|--------|---------|
+| `sys/cpu_pct` | psutil | `pip install psutil` |
+| `sys/ram_used_gb`, `sys/ram_pct` | psutil | `pip install psutil` |
+| `sys/gpu_mem_mb` | `torch.mps` | nothing extra |
+| `sys/gpu_active_pct` | powermetrics | sudo (see below) |
+| `sys/gpu_freq_mhz` | powermetrics | sudo |
+| `sys/gpu_power_mw` | powermetrics | sudo |
+| `sys/cpu_power_mw` | powermetrics | sudo |
+| `sys/total_power_mw` | powermetrics | sudo |
+| `sys/thermal` | powermetrics | sudo (0=Nominal … 4=Critical) |
+
+### Enabling powermetrics without a password prompt
+
+`powermetrics` requires root. Add a one-time sudoers entry so it runs silently:
+
+```bash
+echo "$(whoami) ALL = NOPASSWD: /usr/bin/powermetrics" | sudo tee /etc/sudoers.d/powermetrics
+```
+
+Without this, powermetrics is silently skipped and you still get CPU/RAM/GPU-memory metrics.
+
+### Reading the numbers
+
+- **GPU active residency 100%** — GPU fully utilised; good.
+- **GPU power ≫ CPU power** — GPU-bound; ideal.
+- **CPU power ≫ GPU power** — CPU-bound; try increasing `batch_size` or `num_workers`.
+- **thermal > 0** — chip is throttling; check cooling.
+- **ANE power = 0** — expected; PyTorch MPS does not use the Apple Neural Engine.
 
 ---
 
