@@ -1,6 +1,9 @@
 # Core
 torch
 
+# Pretrained models (--model gpt2 / smollm2-135m / …) — optional
+# transformers
+
 # Hardware monitor (monitor.py / --monitor)
 psutil
 

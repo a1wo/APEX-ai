@@ -2,9 +2,11 @@
 Train a GPT to add two numbers: a + b = c.
 
     python train.py                        # default: forward digits, unpadded, all trackers auto
+    python train.py --model smollm2-135m   # fine-tune a pretrained HF model (see src/models/)
     python train.py --reverse              # ones digit first (easier to learn)
     python train.py --pad                  # zero-pad c to fixed length
     python train.py --monitor              # log hardware metrics (system/*)
+    python train.py --resume               # continue latest checkpoint + same tracker runs
     python train.py --no_wandb             # disable W&B
     python train.py --no_mlflow            # disable MLflow
     python train.py --ndigits 2            # easier task, trains faster
@@ -12,17 +14,19 @@ Train a GPT to add two numbers: a + b = c.
 
 import math
 import os
+import sys
+import signal
 import argparse
 import torch
 from datetime import datetime
 from torch.utils.data import DataLoader
 
 from src.config   import TrainConfig
-from src.data     import AdditionDataset, VOCAB_SIZE
+from src.data     import AdditionDataset
 from src.evaluate import evaluate
 from src.monitor  import SystemMonitor
 from src.tracker  import ExperimentTracker
-from src.model    import GPT, GPTConfig
+from src.models   import MODELS, build_model
 import src.checkpoint as ckpt
 
 
@@ -32,7 +36,7 @@ def _device() -> str:
     return "cpu"
 
 
-def _build_run_config(cfg: TrainConfig, gpt_cfg: GPTConfig, n_params: int,
+def _build_run_config(cfg: TrainConfig, model_meta: dict, n_params: int,
                       device: str, started_at: str) -> dict:
     return {
         # task
@@ -40,12 +44,10 @@ def _build_run_config(cfg: TrainConfig, gpt_cfg: GPTConfig, n_params: int,
         "reverse_c":        cfg.reverse_c,
         "c_order":          "reversed" if cfg.reverse_c else "forward",
         "pad_c":            cfg.pad_c,
-        # model
-        "n_layer":          gpt_cfg.n_layer,
-        "n_head":           gpt_cfg.n_head,
-        "n_embd":           gpt_cfg.n_embd,
-        "block_size":       gpt_cfg.block_size,
-        "vocab_size":       gpt_cfg.vocab_size,
+        # model — meta is per-option: nano has n_layer/n_head/…, HF has hf_id
+        "model":            cfg.model,
+        **model_meta,
+        "block_size":       cfg.block_size,
         "n_params":         n_params,
         # optimisation
         "batch_size":       cfg.batch_size,
@@ -59,46 +61,52 @@ def _build_run_config(cfg: TrainConfig, gpt_cfg: GPTConfig, n_params: int,
     }
 
 
-def train(cfg: TrainConfig) -> GPT:
+def train(cfg: TrainConfig) -> torch.nn.Module:
     device = _device()
     os.makedirs(cfg.ckpt_dir, exist_ok=True)
 
     # ── Model & optimiser ─────────────────────────────────────────────────────
-    gpt_cfg = GPTConfig(
-        block_size = cfg.block_size,
-        vocab_size  = VOCAB_SIZE,
-        n_layer     = cfg.n_layer,
-        n_head      = cfg.n_head,
-        n_embd      = cfg.n_embd,
-    )
-    model     = GPT(gpt_cfg).to(device)
+    model, default_lr = build_model(cfg.model, cfg)
+    model = model.to(device)
+    if cfg.lr is None:
+        cfg.lr = default_lr   # pretrained models need a much gentler LR than nano
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=cfg.lr, weight_decay=0.1, betas=(0.9, 0.99)
     )
 
-    # ── Resume ────────────────────────────────────────────────────────────────
-    start_step = 0
-    latest = ckpt.latest(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c)
-    if latest:
-        start_step = ckpt.load(latest, model, optimizer, device)
-        print(f"Resumed from {latest}  (step {start_step})")
+    # ── Resume / fresh start ──────────────────────────────────────────────────
+    start_step  = 0
+    resume_ids: dict = {}
+    if cfg.resume:
+        latest = ckpt.latest(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c, model=cfg.model)
+        if latest:
+            start_step, resume_ids = ckpt.load(latest, model, optimizer, device)
+            print(f"Resumed from {latest}  (step {start_step})")
+        else:
+            print("No checkpoint to resume for this tag — starting fresh")
     else:
-        print("Starting fresh training")
+        removed = ckpt.clear(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c, model=cfg.model)
+        if removed:
+            print(f"Starting fresh — cleared {removed} old checkpoint(s) for this tag "
+                  f"(use --resume to continue a previous run instead)")
+        else:
+            print("Starting fresh training")
 
     # ── Run metadata ──────────────────────────────────────────────────────────
     started_at = datetime.now().isoformat(timespec="seconds")
     n_params   = sum(p.numel() for p in model.parameters())
-    run_config = _build_run_config(cfg, gpt_cfg, n_params, device, started_at)
-    run_name   = f"{ckpt.run_tag(cfg.ndigits, cfg.reverse_c, cfg.pad_c)}_{started_at}"
+    run_config = _build_run_config(cfg, model.meta, n_params, device, started_at)
+    run_name   = f"{ckpt.run_tag(cfg.ndigits, cfg.reverse_c, cfg.pad_c, model=cfg.model)}_{started_at}"
 
     print(
-        f"device={device}  ndigits={cfg.ndigits}  params={n_params:,}  "
-        f"max_iters={cfg.max_iters}  epoch_size={cfg.epoch_size}  "
+        f"device={device}  model={cfg.model}  ndigits={cfg.ndigits}  params={n_params:,}  "
+        f"max_iters={cfg.max_iters}  lr={cfg.lr}  epoch_size={cfg.epoch_size}  "
         f"c_order={run_config['c_order']}  started={started_at}"
     )
 
     # ── Trackers & monitor ────────────────────────────────────────────────────
-    tracker = ExperimentTracker(run_name, run_config, cfg.use_wandb, cfg.use_mlflow)
+    tracker = ExperimentTracker(run_name, run_config, cfg.use_wandb, cfg.use_mlflow,
+                                resume_ids=resume_ids)
     monitor = None
     if cfg.use_monitor:
         monitor = SystemMonitor(interval_ms=2_000)
@@ -164,10 +172,13 @@ def train(cfg: TrainConfig) -> GPT:
             # ── Checkpoint ────────────────────────────────────────────────────
             if (step + 1) % cfg.epoch_size == 0 or step == cfg.max_iters - 1:
                 epoch_num = (step + 1) // cfg.epoch_size
-                path = ckpt.epoch_path(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c, epoch_num)
+                path = ckpt.epoch_path(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c, epoch_num,
+                                       model=cfg.model)
                 ckpt.save(path, step=step, epoch=epoch_num, reverse_c=cfg.reverse_c,
-                          run_config=run_config, model=model, optimizer=optimizer, gpt_cfg=gpt_cfg)
-                ckpt.prune(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c, keep=cfg.keep_checkpoints)
+                          run_config=run_config, model=model, optimizer=optimizer,
+                          gpt_cfg=getattr(model, "config", None), tracker_ids=tracker.run_ids)
+                ckpt.prune(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c, keep=cfg.keep_checkpoints,
+                           model=cfg.model)
                 tracker.log_artifact(path)
                 print(f"  → checkpoint: {path}")
     finally:
@@ -183,6 +194,10 @@ def train(cfg: TrainConfig) -> GPT:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # SIGTERM (e.g. train_parallel.sh stopping its runs) → SystemExit, so the
+    # try/finally in train() closes the W&B/MLflow runs instead of orphaning them
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+
     p = argparse.ArgumentParser(description="Train GPT to add two numbers")
 
     # task
@@ -192,15 +207,23 @@ if __name__ == "__main__":
     p.add_argument("--pad",              action="store_true",
                    help="zero-pad c to ndigits+1 digits (fixed-length answer)")
     # model
+    p.add_argument("--model",            type=str,   default=TrainConfig.model,
+                   choices=sorted(MODELS),
+                   help="which model to train — 'nano' is the from-scratch GPT, "
+                        "the rest are pretrained HF models (see src/models/)")
     p.add_argument("--n_layer",          type=int,   default=TrainConfig.n_layer)
     p.add_argument("--n_head",           type=int,   default=TrainConfig.n_head)
     p.add_argument("--n_embd",           type=int,   default=TrainConfig.n_embd)
     # optimisation
     p.add_argument("--max_iters",        type=int,   default=TrainConfig.max_iters)
     p.add_argument("--batch_size",       type=int,   default=TrainConfig.batch_size)
-    p.add_argument("--lr",               type=float, default=TrainConfig.lr)
+    p.add_argument("--lr",               type=float, default=TrainConfig.lr,
+                   help="default: the selected model's DEFAULT_LR")
     p.add_argument("--eval_every",       type=int,   default=TrainConfig.eval_every)
     # checkpointing
+    p.add_argument("--resume",           action="store_true",
+                   help="continue from the latest checkpoint and the same W&B/MLflow runs "
+                        "(default: fresh start, clearing this tag's old checkpoints)")
     p.add_argument("--ckpt_dir",         type=str,   default=TrainConfig.ckpt_dir)
     p.add_argument("--epoch_size",       type=int,   default=TrainConfig.epoch_size)
     p.add_argument("--keep_checkpoints", type=int,   default=TrainConfig.keep_checkpoints)
@@ -216,6 +239,7 @@ if __name__ == "__main__":
         ndigits          = args.ndigits,
         reverse_c        = args.reverse,
         pad_c            = args.pad,
+        model            = args.model,
         n_layer          = args.n_layer,
         n_head           = args.n_head,
         n_embd           = args.n_embd,
@@ -223,6 +247,7 @@ if __name__ == "__main__":
         batch_size       = args.batch_size,
         lr               = args.lr,
         eval_every       = args.eval_every,
+        resume           = args.resume,
         ckpt_dir         = args.ckpt_dir,
         epoch_size       = args.epoch_size,
         keep_checkpoints = args.keep_checkpoints,

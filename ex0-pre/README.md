@@ -93,6 +93,10 @@ python train.py                  # forward, unpadded (default — hardest)
 python train.py --reverse --pad  # reversed, fixed-length (easiest for the model)
 ```
 
+> Every run starts **fresh** and clears that tag's old checkpoints. Pass `--resume`
+> to continue from the latest checkpoint instead — it also reattaches to the same
+> W&B and MLflow runs, so the curves continue where they left off.
+
 ### Key flags
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -104,6 +108,8 @@ python train.py --reverse --pad  # reversed, fixed-length (easiest for the model
 | `--keep_checkpoints N` | `3` | how many recent checkpoints to keep |
 | `--reverse` | off | predict c ones-digit-first |
 | `--pad` | off | zero-pad c to ndigits+1 digits |
+| `--model NAME` | `nano` | `nano` (from scratch) or a pretrained HF model (see `src/models/`) |
+| `--resume` | off | continue the latest checkpoint **and** the same W&B/MLflow runs |
 | `--monitor` | off | log hardware metrics (`system/*`) |
 | `--no_wandb` | off | disable W&B logging |
 | `--no_mlflow` | off | disable MLflow logging |
