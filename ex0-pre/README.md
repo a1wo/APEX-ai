@@ -57,7 +57,7 @@ ex0-pre/
 │   ├── mlflow.sh       #   open MLflow UI on ./mlruns
 │   ├── wandb.sh        #   verify W&B login, open dashboard
 │   └── clear_checkpoints.sh  # delete all checkpoints (with confirmation)
-├── addition.ipynb      # interactive notebook: data viz, training, eval, attention maps
+├── explore.ipynb       # notebook: explore trained models (data, eval, attention maps)
 └── README.md           # this file
 ```
 
@@ -232,10 +232,11 @@ The gap between reversed and forward is the main thing to observe — it demonst
 
 ## Notebook
 
-Open `addition.ipynb` for an interactive version:
+Open `explore.ipynb` to explore a trained model (training happens via `scripts/train.sh`,
+not in the notebook). Set `ndigits` / `reverse_c` / `pad_c` in the setup cell to pick
+which run's checkpoint to load.
 
 1. **Data** — visualise problems, tokenisation, and mask positions
-2. **Model** — inspect architecture and parameter count
-3. **Training** — quick 5 000-step run with live loss curve (or load a checkpoint)
-4. **Evaluation** — exact-match accuracy + breakdown by operand magnitude
-5. **Attention patterns** — heatmaps of what each layer/head attends to when predicting answer digits
+2. **Load a trained model** — newest checkpoint matching the chosen config
+3. **Evaluation** — exact-match accuracy, hand-picked examples, breakdown by operand magnitude
+4. **Attention patterns** — heatmaps of what each layer/head attends to when predicting answer digits
