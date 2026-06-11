@@ -4,7 +4,7 @@ Train a GPT to add two numbers: a + b = c.
     python train.py                        # default: forward digits, unpadded, all trackers auto
     python train.py --reverse              # ones digit first (easier to learn)
     python train.py --pad                  # zero-pad c to fixed length
-    python train.py --monitor              # log hardware metrics (sys/*)
+    python train.py --monitor              # log hardware metrics (system/*)
     python train.py --no_wandb             # disable W&B
     python train.py --no_mlflow            # disable MLflow
     python train.py --ndigits 2            # easier task, trains faster
@@ -205,7 +205,7 @@ if __name__ == "__main__":
     p.add_argument("--no_wandb",         action="store_true")
     p.add_argument("--no_mlflow",        action="store_true")
     p.add_argument("--monitor",          action="store_true",
-                   help="log hardware metrics (sys/*) alongside training metrics")
+                   help="log hardware metrics (system/*) alongside training metrics")
 
     args = p.parse_args()
 

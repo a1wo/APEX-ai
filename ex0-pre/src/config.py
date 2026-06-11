@@ -28,7 +28,7 @@ class TrainConfig:
     # ── experiment tracking ───────────────────────────────────────────────────
     use_wandb:        bool  = True     # skipped (with a notice) if wandb not installed
     use_mlflow:       bool  = True     # skipped (with a notice) if mlflow not installed
-    use_monitor:      bool  = False    # hardware monitor thread (sys/* metrics); also
+    use_monitor:      bool  = False    # hardware monitor thread (system/* metrics); also
                                        # runnable standalone: python monitor.py
 
     # ── derived (read-only) ───────────────────────────────────────────────────

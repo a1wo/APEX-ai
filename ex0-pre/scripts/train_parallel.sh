@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run two training configs in parallel — forward/unpadded (default) vs reversed/padded.
-# Each process has its own --monitor, so sys/* metrics and checkpoint artifacts land
+# Each process has its own --monitor, so system/* metrics and checkpoint artifacts land
 # in that run's own W&B/MLflow entry. Extra flags pass through to BOTH runs, e.g.:
 #     scripts/train_parallel.sh --max_iters 20000
 # Console output is split into logs/ so the two runs don't interleave.

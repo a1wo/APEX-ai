@@ -105,7 +105,7 @@ python train.py --reverse --pad  # reversed, fixed-length (easiest for the model
 | `--keep_checkpoints N` | `3` | how many recent checkpoints to keep |
 | `--reverse` | off | predict c ones-digit-first |
 | `--pad` | off | zero-pad c to ndigits+1 digits |
-| `--monitor` | off | log hardware metrics (`sys/*`) |
+| `--monitor` | off | log hardware metrics (`system/*`) |
 | `--no_wandb` | off | disable W&B logging |
 | `--no_mlflow` | off | disable MLflow logging |
 
@@ -162,7 +162,7 @@ checkpoints/addition_3digit_rev_epoch0001.pt
 **Off by default.** Two ways to use it:
 
 ```bash
-python train.py --monitor    # log sys/* metrics to W&B/MLflow during training
+python train.py --monitor    # log system/* metrics to W&B/MLflow during training
 python monitor.py            # standalone: print live metrics to the console
 sudo python monitor.py       # + GPU power/thermal (powermetrics needs root)
 ```
@@ -173,15 +173,15 @@ The monitor announces its status on startup (psutil active, powermetrics availab
 
 | Metric | Source | Requires |
 |--------|--------|---------|
-| `sys/cpu_pct` | psutil | `pip install psutil` |
-| `sys/ram_used_gb`, `sys/ram_pct` | psutil | `pip install psutil` |
-| `sys/gpu_mem_mb` | `torch.mps` | nothing extra |
-| `sys/gpu_active_pct` | powermetrics | sudo (see below) |
-| `sys/gpu_freq_mhz` | powermetrics | sudo |
-| `sys/gpu_power_mw` | powermetrics | sudo |
-| `sys/cpu_power_mw` | powermetrics | sudo |
-| `sys/total_power_mw` | powermetrics | sudo |
-| `sys/thermal` | powermetrics | sudo (0=Nominal … 4=Critical) |
+| `system/cpu_pct` | psutil | `pip install psutil` |
+| `system/ram_used_gb`, `system/ram_pct` | psutil | `pip install psutil` |
+| `system/gpu_mem_mb` | `torch.mps` | nothing extra |
+| `system/gpu_active_pct` | powermetrics | sudo (see below) |
+| `system/gpu_freq_mhz` | powermetrics | sudo |
+| `system/gpu_power_mw` | powermetrics | sudo |
+| `system/cpu_power_mw` | powermetrics | sudo |
+| `system/total_power_mw` | powermetrics | sudo |
+| `system/thermal` | powermetrics | sudo (0=Nominal … 4=Critical) |
 
 ### Enabling powermetrics without a password prompt
 

@@ -28,7 +28,7 @@ class SystemMonitor:
     Start a background thread that polls hardware metrics every `interval_ms` ms.
     Call latest() from the training loop to get the most-recent snapshot as a dict.
 
-    All keys are prefixed with "sys/" for clean namespacing in W&B / MLflow.
+    All keys are prefixed with "system/" for clean namespacing in W&B / MLflow.
     """
 
     def __init__(self, interval_ms: int = 2_000):
@@ -72,11 +72,11 @@ class SystemMonitor:
             except Exception:
                 pass
             self._set({
-                "sys/cpu_pct":     psutil.cpu_percent(),
-                "sys/ram_used_gb": round(vm.used      / 1e9, 2),
-                "sys/ram_free_gb": round(vm.available / 1e9, 2),
-                "sys/ram_pct":     vm.percent,
-                "sys/gpu_mem_mb":  round(gpu_mb, 1),
+                "system/cpu_pct":     psutil.cpu_percent(),
+                "system/ram_used_gb": round(vm.used      / 1e9, 2),
+                "system/ram_free_gb": round(vm.available / 1e9, 2),
+                "system/ram_pct":     vm.percent,
+                "system/gpu_mem_mb":  round(gpu_mb, 1),
             })
 
     def _powermetrics_loop(self) -> None:
@@ -99,13 +99,13 @@ class SystemMonitor:
 
         print("monitor ▸ powermetrics starting (GPU/power/thermal)")
         _PATTERNS = [
-            (r"GPU HW active residency:\s+([\d.]+)%",                "sys/gpu_active_pct"),
-            (r"GPU HW active frequency:\s+([\d.]+) MHz",             "sys/gpu_freq_mhz"),
-            (r"GPU idle residency:\s+([\d.]+)%",                     "sys/gpu_idle_pct"),
-            (r"GPU Power:\s+([\d.]+) mW",                            "sys/gpu_power_mw"),
-            (r"CPU Power:\s+([\d.]+) mW",                            "sys/cpu_power_mw"),
-            (r"ANE Power:\s+([\d.]+) mW",                            "sys/ane_power_mw"),
-            (r"Combined Power \(CPU \+ GPU \+ ANE\):\s+([\d.]+) mW", "sys/total_power_mw"),
+            (r"GPU HW active residency:\s+([\d.]+)%",                "system/gpu_active_pct"),
+            (r"GPU HW active frequency:\s+([\d.]+) MHz",             "system/gpu_freq_mhz"),
+            (r"GPU idle residency:\s+([\d.]+)%",                     "system/gpu_idle_pct"),
+            (r"GPU Power:\s+([\d.]+) mW",                            "system/gpu_power_mw"),
+            (r"CPU Power:\s+([\d.]+) mW",                            "system/cpu_power_mw"),
+            (r"ANE Power:\s+([\d.]+) mW",                            "system/ane_power_mw"),
+            (r"Combined Power \(CPU \+ GPU \+ ANE\):\s+([\d.]+) mW", "system/total_power_mw"),
         ]
         _THERMAL = {"Nominal": 0, "Light": 1, "Moderate": 2, "Heavy": 3, "Critical": 4}
 
@@ -120,7 +120,7 @@ class SystemMonitor:
                     self._set({key: float(m.group(1))})
             m = re.search(r"Current pressure level:\s+(\w+)", line)
             if m:
-                self._set({"sys/thermal": _THERMAL.get(m.group(1), -1)})
+                self._set({"system/thermal": _THERMAL.get(m.group(1), -1)})
 
         # sudo -n fails instantly (closing stdout) when passwordless sudo isn't set up
         if proc.wait() != 0 and not self._stop.is_set():

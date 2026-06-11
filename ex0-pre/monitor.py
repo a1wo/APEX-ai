@@ -7,7 +7,7 @@ Standalone hardware monitor — prints live system metrics to the console.
     python monitor.py --track         # also log to W&B/MLflow as its own run
     python monitor.py --track --run-name monitor_during_3digit_runs
 
-Same metrics that train.py logs when run with --monitor (sys/* in W&B/MLflow).
+Same metrics that train.py logs when run with --monitor (system/* in W&B/MLflow).
 Stop with Ctrl-C.
 """
 
@@ -47,7 +47,7 @@ def main() -> None:
             if not metrics:
                 continue
             line = "  ".join(
-                f"{k.removeprefix('sys/')}={v}" for k, v in sorted(metrics.items())
+                f"{k.removeprefix('system/')}={v}" for k, v in sorted(metrics.items())
             )
             print(time.strftime("%H:%M:%S"), line, flush=True)
             if tracker:
