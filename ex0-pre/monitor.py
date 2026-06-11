@@ -1,112 +1,64 @@
 """
-Background hardware monitor for Apple Silicon (and any platform with psutil).
+Standalone hardware monitor — prints live system metrics to the console.
 
-Data sources
-  psutil       → CPU %, RAM used/free/total          (pip install psutil)
-  torch.mps    → GPU memory allocated                (built-in with PyTorch)
-  powermetrics → GPU active %, power draw, thermal   (macOS; needs passwordless sudo)
+    python monitor.py                 # sample every 2 s (CPU/RAM/GPU-mem)
+    sudo python monitor.py            # + GPU power/thermal (powermetrics needs root)
+    python monitor.py --interval 0.5  # sample every 0.5 s
+    python monitor.py --track         # also log to W&B/MLflow as its own run
+    python monitor.py --track --run-name monitor_during_3digit_runs
 
-Passwordless sudo setup (one-time):
-    echo "$(whoami) ALL = NOPASSWD: /usr/bin/powermetrics" | sudo tee /etc/sudoers.d/powermetrics
-
-If powermetrics is unavailable, the monitor degrades silently to psutil-only.
+Same metrics that train.py logs when run with --monitor (sys/* in W&B/MLflow).
+Stop with Ctrl-C.
 """
 
-import re
-import subprocess
-import threading
-import torch
+import argparse
+import time
+from datetime import datetime
+
+from src.monitor import SystemMonitor
+from src.tracker import ExperimentTracker
 
 
-class SystemMonitor:
-    """
-    Start a background thread that polls hardware metrics every `interval_ms` ms.
-    Call latest() from the training loop to get the most-recent snapshot as a dict.
+def main() -> None:
+    p = argparse.ArgumentParser(description="Print live hardware metrics")
+    p.add_argument("--interval", type=float, default=2.0,
+                   help="seconds between samples (default 2)")
+    p.add_argument("--track", action="store_true",
+                   help="log samples to W&B/MLflow as a standalone run")
+    p.add_argument("--run-name", default=None,
+                   help="tracker run name (default: monitor_<timestamp>)")
+    args = p.parse_args()
 
-    All keys are prefixed with "sys/" for clean namespacing in W&B / MLflow.
-    """
+    tracker = None
+    if args.track:
+        name = args.run_name or f"monitor_{datetime.now().isoformat(timespec='seconds')}"
+        tracker = ExperimentTracker(
+            name, {"kind": "monitor", "interval_s": args.interval}, True, True
+        )
 
-    def __init__(self, interval_ms: int = 2_000):
-        self.interval_ms = interval_ms
-        self._metrics: dict = {}
-        self._lock  = threading.Lock()
-        self._stop  = threading.Event()
+    mon = SystemMonitor(interval_ms=int(args.interval * 1000))
+    mon.start()
+    step = 0
 
-    # ── Public API ────────────────────────────────────────────────────────────
-
-    def start(self) -> None:
-        threading.Thread(target=self._psutil_loop,       daemon=True).start()
-        threading.Thread(target=self._powermetrics_loop, daemon=True).start()
-
-    def stop(self) -> None:
-        self._stop.set()
-
-    def latest(self) -> dict:
-        with self._lock:
-            return dict(self._metrics)
-
-    # ── Internal ──────────────────────────────────────────────────────────────
-
-    def _set(self, metrics: dict) -> None:
-        with self._lock:
-            self._metrics.update(metrics)
-
-    def _psutil_loop(self) -> None:
-        try:
-            import psutil
-        except ImportError:
-            return  # pip install psutil to enable
-
-        while not self._stop.wait(self.interval_ms / 1000):
-            vm     = psutil.virtual_memory()
-            gpu_mb = 0.0
-            try:
-                gpu_mb = torch.mps.current_allocated_memory() / 1e6
-            except Exception:
-                pass
-            self._set({
-                "sys/cpu_pct":     psutil.cpu_percent(),
-                "sys/ram_used_gb": round(vm.used      / 1e9, 2),
-                "sys/ram_free_gb": round(vm.available / 1e9, 2),
-                "sys/ram_pct":     vm.percent,
-                "sys/gpu_mem_mb":  round(gpu_mb, 1),
-            })
-
-    def _powermetrics_loop(self) -> None:
-        # sudo -n exits immediately if a password would be required — no-op on
-        # machines where the sudoers entry hasn't been added.
-        try:
-            proc = subprocess.Popen(
-                ["sudo", "-n", "powermetrics",
-                 "--samplers", "gpu_power,cpu_power,thermal",
-                 "-i", str(self.interval_ms), "-n", "0"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
+    try:
+        while True:
+            time.sleep(args.interval)
+            metrics = mon.latest()
+            if not metrics:
+                continue
+            line = "  ".join(
+                f"{k.removeprefix('sys/')}={v}" for k, v in sorted(metrics.items())
             )
-        except Exception:
-            return
+            print(time.strftime("%H:%M:%S"), line, flush=True)
+            if tracker:
+                tracker.log(metrics, step=step)
+            step += 1
+    except KeyboardInterrupt:
+        mon.stop()
+        if tracker:
+            tracker.finish()
+        print("\nstopped")
 
-        _PATTERNS = [
-            (r"GPU HW active residency:\s+([\d.]+)%",                "sys/gpu_active_pct"),
-            (r"GPU HW active frequency:\s+([\d.]+) MHz",             "sys/gpu_freq_mhz"),
-            (r"GPU idle residency:\s+([\d.]+)%",                     "sys/gpu_idle_pct"),
-            (r"GPU Power:\s+([\d.]+) mW",                            "sys/gpu_power_mw"),
-            (r"CPU Power:\s+([\d.]+) mW",                            "sys/cpu_power_mw"),
-            (r"ANE Power:\s+([\d.]+) mW",                            "sys/ane_power_mw"),
-            (r"Combined Power \(CPU \+ GPU \+ ANE\):\s+([\d.]+) mW", "sys/total_power_mw"),
-        ]
-        _THERMAL = {"Nominal": 0, "Light": 1, "Moderate": 2, "Heavy": 3, "Critical": 4}
 
-        for line in proc.stdout:
-            if self._stop.is_set():
-                proc.terminate()
-                break
-            line = line.strip()
-            for pattern, key in _PATTERNS:
-                m = re.search(pattern, line)
-                if m:
-                    self._set({key: float(m.group(1))})
-            m = re.search(r"Current pressure level:\s+(\w+)", line)
-            if m:
-                self._set({"sys/thermal": _THERMAL.get(m.group(1), -1)})
+if __name__ == "__main__":
+    main()

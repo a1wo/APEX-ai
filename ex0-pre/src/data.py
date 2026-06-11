@@ -19,22 +19,28 @@ def decode(tokens: list[int]) -> str:
 
 
 # ── Problem generation ────────────────────────────────────────────────────────
-def make_problem(ndigits: int = NDIGITS, reverse_c: bool = True) -> tuple[str, int, int, int]:
+def make_problem(
+    ndigits: int = NDIGITS, reverse_c: bool = False, pad_c: bool = False
+) -> tuple[str, int, int, int]:
     """
     Return (problem_string, a, b, c) where c = a + b.
 
     Format:  "A+B=CCCC"
       - a, b  written without leading zeros (variable length)
-      - c     zero-padded to ndigits+1 digits; reversed when reverse_c=True
-              so the model outputs the least-significant digit first
+      - c     zero-padded to ndigits+1 digits when pad_c=True (fixed-length
+              answer; the vocab has no EOS token, so this is how generation
+              knows when to stop); variable length when pad_c=False
+      - c     reversed when reverse_c=True so the model outputs the
+              least-significant digit first
 
-    reverse_c=True  → "12+34=640"    ones digit of 46 is 6, then 4, then 0
-    reverse_c=False → "12+34=0046"   standard left-to-right
+    reverse_c=True,  pad_c=True  → "12+34=640"    ones digit of 46 is 6, then 4, then 0
+    reverse_c=False, pad_c=True  → "12+34=0046"   standard left-to-right
+    reverse_c=False, pad_c=False → "12+34=46"     no leading zeros
     """
     a = random.randint(0, 10**ndigits - 1)
     b = random.randint(0, 10**ndigits - 1)
     c = a + b
-    c_str = str(c).zfill(ndigits + 1)
+    c_str = str(c).zfill(ndigits + 1) if pad_c else str(c)
     c_out = c_str[::-1] if reverse_c else c_str
     return f"{a}+{b}={c_out}", a, b, c
 
@@ -48,17 +54,19 @@ class AdditionDataset(Dataset):
     without a custom collate_fn. Padded positions carry y=-1 (ignored by loss).
     """
 
-    def __init__(self, size: int = 200_000, ndigits: int = NDIGITS, reverse_c: bool = True):
+    def __init__(self, size: int = 200_000, ndigits: int = NDIGITS,
+                 reverse_c: bool = False, pad_c: bool = False):
         self.size       = size
         self.ndigits    = ndigits
         self.reverse_c  = reverse_c
+        self.pad_c      = pad_c
         self.block_size = 3 * ndigits + 2  # max x-length when both operands are full-width
 
     def __len__(self) -> int:
         return self.size
 
     def __getitem__(self, _idx) -> tuple[torch.Tensor, torch.Tensor]:
-        problem, _, _, _ = make_problem(self.ndigits, self.reverse_c)
+        problem, _, _, _ = make_problem(self.ndigits, self.reverse_c, self.pad_c)
         tokens  = encode(problem)
         seq_len = len(tokens) - 1
 

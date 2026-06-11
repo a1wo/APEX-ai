@@ -1,8 +1,10 @@
 """
 Train a GPT to add two numbers: a + b = c.
 
-    python train.py                        # default: reversed digits, all trackers auto
-    python train.py --no_reverse           # forward digit order
+    python train.py                        # default: forward digits, unpadded, all trackers auto
+    python train.py --reverse              # ones digit first (easier to learn)
+    python train.py --pad                  # zero-pad c to fixed length
+    python train.py --monitor              # log hardware metrics (sys/*)
     python train.py --no_wandb             # disable W&B
     python train.py --no_mlflow            # disable MLflow
     python train.py --ndigits 2            # easier task, trains faster
@@ -15,13 +17,13 @@ import torch
 from datetime import datetime
 from torch.utils.data import DataLoader
 
-from config     import TrainConfig
-from data       import AdditionDataset, VOCAB_SIZE
-from evaluate   import evaluate
-from monitor    import SystemMonitor
-from tracker    import ExperimentTracker
-from model      import GPT, GPTConfig
-import checkpoint as ckpt
+from src.config   import TrainConfig
+from src.data     import AdditionDataset, VOCAB_SIZE
+from src.evaluate import evaluate
+from src.monitor  import SystemMonitor
+from src.tracker  import ExperimentTracker
+from src.model    import GPT, GPTConfig
+import src.checkpoint as ckpt
 
 
 def _device() -> str:
@@ -37,6 +39,7 @@ def _build_run_config(cfg: TrainConfig, gpt_cfg: GPTConfig, n_params: int,
         "ndigits":          cfg.ndigits,
         "reverse_c":        cfg.reverse_c,
         "c_order":          "reversed" if cfg.reverse_c else "forward",
+        "pad_c":            cfg.pad_c,
         # model
         "n_layer":          gpt_cfg.n_layer,
         "n_head":           gpt_cfg.n_head,
@@ -75,7 +78,7 @@ def train(cfg: TrainConfig) -> GPT:
 
     # ── Resume ────────────────────────────────────────────────────────────────
     start_step = 0
-    latest = ckpt.latest(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c)
+    latest = ckpt.latest(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c)
     if latest:
         start_step = ckpt.load(latest, model, optimizer, device)
         print(f"Resumed from {latest}  (step {start_step})")
@@ -86,7 +89,7 @@ def train(cfg: TrainConfig) -> GPT:
     started_at = datetime.now().isoformat(timespec="seconds")
     n_params   = sum(p.numel() for p in model.parameters())
     run_config = _build_run_config(cfg, gpt_cfg, n_params, device, started_at)
-    run_name   = f"{ckpt.run_tag(cfg.ndigits, cfg.reverse_c)}_{started_at}"
+    run_name   = f"{ckpt.run_tag(cfg.ndigits, cfg.reverse_c, cfg.pad_c)}_{started_at}"
 
     print(
         f"device={device}  ndigits={cfg.ndigits}  params={n_params:,}  "
@@ -96,11 +99,14 @@ def train(cfg: TrainConfig) -> GPT:
 
     # ── Trackers & monitor ────────────────────────────────────────────────────
     tracker = ExperimentTracker(run_name, run_config, cfg.use_wandb, cfg.use_mlflow)
-    monitor = SystemMonitor(interval_ms=2_000)
-    monitor.start()
+    monitor = None
+    if cfg.use_monitor:
+        monitor = SystemMonitor(interval_ms=2_000)
+        monitor.start()
 
     def log(metrics: dict, step: int) -> None:
-        tracker.log({**metrics, **monitor.latest()}, step=step)
+        sys_metrics = monitor.latest() if monitor else {}
+        tracker.log({**metrics, **sys_metrics}, step=step)
 
     # ── LR schedule ───────────────────────────────────────────────────────────
     def get_lr(it: int) -> float:
@@ -110,11 +116,12 @@ def train(cfg: TrainConfig) -> GPT:
         return cfg.lr * 0.5 * (1.0 + math.cos(math.pi * t))
 
     # ── Data ──────────────────────────────────────────────────────────────────
-    remaining = cfg.max_iters - start_step
+    remaining = max(0, cfg.max_iters - start_step)
     dataset   = AdditionDataset(
         size      = remaining * cfg.batch_size,
         ndigits   = cfg.ndigits,
         reverse_c = cfg.reverse_c,
+        pad_c     = cfg.pad_c,
     )
     loader    = DataLoader(dataset, batch_size=cfg.batch_size, num_workers=0)
     data_iter = iter(loader)
@@ -148,21 +155,24 @@ def train(cfg: TrainConfig) -> GPT:
         if step % cfg.eval_every == 0 or step == cfg.max_iters - 1:
             avg_loss = loss_accum / cfg.eval_every if step > start_step else loss.item()
             loss_accum = 0.0
-            acc = evaluate(model, ndigits=cfg.ndigits, device=device, reverse_c=cfg.reverse_c)
+            acc = evaluate(model, ndigits=cfg.ndigits, device=device,
+                           reverse_c=cfg.reverse_c, pad_c=cfg.pad_c)
             print(f"step {step:6d} | loss {avg_loss:.4f} | acc {acc:.3f}")
             log({"eval/loss": avg_loss, "eval/accuracy": acc}, step=step)
 
         # ── Checkpoint ────────────────────────────────────────────────────────
         if (step + 1) % cfg.epoch_size == 0 or step == cfg.max_iters - 1:
             epoch_num = (step + 1) // cfg.epoch_size
-            path = ckpt.epoch_path(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, epoch_num)
+            path = ckpt.epoch_path(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c, epoch_num)
             ckpt.save(path, step=step, epoch=epoch_num, reverse_c=cfg.reverse_c,
                       run_config=run_config, model=model, optimizer=optimizer, gpt_cfg=gpt_cfg)
-            ckpt.prune(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, keep=cfg.keep_checkpoints)
+            ckpt.prune(cfg.ckpt_dir, cfg.ndigits, cfg.reverse_c, cfg.pad_c, keep=cfg.keep_checkpoints)
+            tracker.log_artifact(path)
             print(f"  → checkpoint: {path}")
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
-    monitor.stop()
+    if monitor:
+        monitor.stop()
     tracker.finish()
     print("\nDone.")
     return model
@@ -174,8 +184,10 @@ if __name__ == "__main__":
 
     # task
     p.add_argument("--ndigits",          type=int,   default=TrainConfig.ndigits)
-    p.add_argument("--no_reverse",       action="store_true",
-                   help="predict c left-to-right instead of reversed")
+    p.add_argument("--reverse",          action="store_true",
+                   help="predict c ones-digit-first instead of left-to-right")
+    p.add_argument("--pad",              action="store_true",
+                   help="zero-pad c to ndigits+1 digits (fixed-length answer)")
     # model
     p.add_argument("--n_layer",          type=int,   default=TrainConfig.n_layer)
     p.add_argument("--n_head",           type=int,   default=TrainConfig.n_head)
@@ -184,6 +196,7 @@ if __name__ == "__main__":
     p.add_argument("--max_iters",        type=int,   default=TrainConfig.max_iters)
     p.add_argument("--batch_size",       type=int,   default=TrainConfig.batch_size)
     p.add_argument("--lr",               type=float, default=TrainConfig.lr)
+    p.add_argument("--eval_every",       type=int,   default=TrainConfig.eval_every)
     # checkpointing
     p.add_argument("--ckpt_dir",         type=str,   default=TrainConfig.ckpt_dir)
     p.add_argument("--epoch_size",       type=int,   default=TrainConfig.epoch_size)
@@ -191,21 +204,26 @@ if __name__ == "__main__":
     # tracking
     p.add_argument("--no_wandb",         action="store_true")
     p.add_argument("--no_mlflow",        action="store_true")
+    p.add_argument("--monitor",          action="store_true",
+                   help="log hardware metrics (sys/*) alongside training metrics")
 
     args = p.parse_args()
 
     train(TrainConfig(
         ndigits          = args.ndigits,
-        reverse_c        = not args.no_reverse,
+        reverse_c        = args.reverse,
+        pad_c            = args.pad,
         n_layer          = args.n_layer,
         n_head           = args.n_head,
         n_embd           = args.n_embd,
         max_iters        = args.max_iters,
         batch_size       = args.batch_size,
         lr               = args.lr,
+        eval_every       = args.eval_every,
         ckpt_dir         = args.ckpt_dir,
         epoch_size       = args.epoch_size,
         keep_checkpoints = args.keep_checkpoints,
         use_wandb        = not args.no_wandb,
         use_mlflow       = not args.no_mlflow,
+        use_monitor      = args.monitor,
     ))

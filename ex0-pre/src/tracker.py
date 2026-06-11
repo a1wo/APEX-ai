@@ -53,6 +53,19 @@ class ExperimentTracker:
         if self._mlf:
             self._mlf.log_metrics(metrics, step=step)
 
+    def log_artifact(self, path: str) -> None:
+        """Upload a file (e.g. a checkpoint) to all active trackers."""
+        if self._wb:
+            try:
+                self._wb.save(path, policy="now")
+            except Exception as e:
+                print(f"wandb  ▸ artifact upload failed ({e})")
+        if self._mlf:
+            try:
+                self._mlf.log_artifact(path)
+            except Exception as e:
+                print(f"mlflow ▸ artifact upload failed ({e})")
+
     def finish(self) -> None:
         if self._wb:
             self._wb.finish()

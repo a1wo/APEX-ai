@@ -1,0 +1,13 @@
+# Core
+torch
+
+# Hardware monitor (monitor.py / --monitor)
+psutil
+
+# Experiment tracking (optional — training runs without them)
+wandb
+mlflow
+
+# Notebook (addition.ipynb)
+jupyter
+matplotlib

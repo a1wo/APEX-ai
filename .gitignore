@@ -1,9 +1,12 @@
 __pycache__/
 *.pyc
+.venv/
 .ipynb_checkpoints/
 .DS_Store
 *.pt
 checkpoints/
 mlruns/
 mlartifacts/
+mlflow.db
 wandb/
+logs/

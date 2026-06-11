@@ -12,17 +12,22 @@ Given the string `"123+456="`, the model autoregressively generates the digits o
 
 **Key design choices:**
 
-### 1. Reversed digit output (default)
-The model predicts the digits of `c` in **right-to-left** order — ones digit first:
+### 1. Digit order and padding (both opt-in)
+By default the answer is written naturally: forward order, no padding (`123+456=579`).
+Two flags make the task easier for the model:
 
-```
-123 + 456 = 579
-                → output: "9", "7", "5", "0"   (reversed, zero-padded to ndigits+1)
-```
+- `--reverse` — predict the digits of `c` **right-to-left**, ones digit first:
 
-This mirrors pencil-and-paper addition: carry information flows upward, so each output token only needs to know about carries from lower digits already generated. Left-to-right would require the model to "look ahead" and compute all carries internally before writing the first digit.
+  ```
+  123 + 456 = 579
+                  → output: "9", "7", "5"
+  ```
 
-Try `--no_reverse` to see how much harder the forward-order task is.
+  This mirrors pencil-and-paper addition: carry information flows upward, so each output token only needs to know about carries from lower digits already generated. Forward order requires the model to "look ahead" and resolve all carries internally before writing the first digit.
+
+- `--pad` — zero-pad `c` to a fixed `ndigits+1` digits (`123+456=0579`), so the model never has to decide how many digits to emit. (The vocab has no end-of-sequence token.)
+
+Comparing default vs `--reverse --pad` shows how much these inductive biases matter.
 
 ### 2. Loss masking
 The question portion `"NNN+NNN="` is masked out of the loss using `ignore_index=-1` in `CrossEntropyLoss`. The model is only penalised on the answer digits, which encourages it to attend to the operands rather than memorise question patterns.
@@ -36,10 +41,24 @@ There is no `train.bin` or `val.bin`. Each training step samples fresh random pr
 
 ```
 ex0-pre/
-├── model.py            # Minimal GPT: CausalSelfAttention → MLP → Block → GPT
-├── train_addition.py   # Data generation, training loop, checkpointing, trackers
-├── addition.ipynb      # Interactive notebook: data viz, training, eval, attention maps
-└── README.md           # This file
+├── train.py            # ── executable: training run (CLI flags below)
+├── monitor.py          # ── executable: live hardware metrics in the console
+├── src/                # library modules
+│   ├── config.py       #   TrainConfig dataclass (all defaults)
+│   ├── data.py         #   vocab, problem generation, AdditionDataset
+│   ├── model.py        #   minimal GPT: CausalSelfAttention → MLP → Block → GPT
+│   ├── evaluate.py     #   exact-match accuracy
+│   ├── checkpoint.py   #   run tags, save/load/prune
+│   ├── tracker.py      #   W&B + MLflow wrapper
+│   └── monitor.py      #   SystemMonitor (psutil + powermetrics)
+├── scripts/            # one-liners
+│   ├── train.sh        #   scripts/train.sh --reverse --pad …
+│   ├── monitor.sh      #   live metrics (sudo for power/thermal)
+│   ├── mlflow.sh       #   open MLflow UI on ./mlruns
+│   ├── wandb.sh        #   verify W&B login, open dashboard
+│   └── clear_checkpoints.sh  # delete all checkpoints (with confirmation)
+├── addition.ipynb      # interactive notebook: data viz, training, eval, attention maps
+└── README.md           # this file
 ```
 
 ---
@@ -47,10 +66,12 @@ ex0-pre/
 ## Setup
 
 ```bash
-pip install torch
-pip install wandb   # optional — for W&B logging
-pip install mlflow  # optional — for MLflow logging
+python3.13 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+source .venv/bin/activate
 ```
+
+`requirements.txt` covers torch, psutil (monitor), wandb + mlflow (tracking), and jupyter + matplotlib (notebook). The `scripts/*.sh` helpers find `.venv` automatically — no need to activate first.
 
 If using W&B, log in once:
 ```bash
@@ -66,11 +87,11 @@ wandb login
 python train.py
 ```
 
-### Compare reversed vs forward digit order
+### Compare task formats
 ```bash
-# Run both — they write to separate checkpoint files (_rev vs _fwd)
-python train.py                 # reversed (default, easier for the model)
-python train.py --no_reverse    # forward  (harder — requires implicit carry lookahead)
+# Each format writes to its own checkpoint tag — they never overwrite each other
+python train.py                  # forward, unpadded (default — hardest)
+python train.py --reverse --pad  # reversed, fixed-length (easiest for the model)
 ```
 
 ### Key flags
@@ -82,7 +103,9 @@ python train.py --no_reverse    # forward  (harder — requires implicit carry l
 | `--lr F` | `3e-4` | learning rate |
 | `--epoch_size N` | `5_000` | steps between checkpoints |
 | `--keep_checkpoints N` | `3` | how many recent checkpoints to keep |
-| `--no_reverse` | off | predict c left-to-right |
+| `--reverse` | off | predict c ones-digit-first |
+| `--pad` | off | zero-pad c to ndigits+1 digits |
+| `--monitor` | off | log hardware metrics (`sys/*`) |
 | `--no_wandb` | off | disable W&B logging |
 | `--no_mlflow` | off | disable MLflow logging |
 
@@ -107,9 +130,8 @@ Open [wandb.ai](https://wandb.ai) → project **gpt-addition** to see:
 ### MLflow
 
 ```bash
-pip install mlflow
-python train_addition.py          # logs to local ./mlruns/
-mlflow ui                         # open http://localhost:5000
+python train.py                   # metrics → ./mlflow.db, artifacts → ./mlruns/
+scripts/mlflow.sh                 # open http://localhost:5000
 ```
 
 The MLflow UI lets you:
@@ -119,23 +141,31 @@ The MLflow UI lets you:
 
 ### Run naming
 
-Every run is tagged `addition_{ndigits}digit_{rev|fwd}_{ISO-timestamp}`, e.g.:
+Every run is tagged `addition_{ndigits}digit_{rev|fwd}[_nopad]_{ISO-timestamp}` (the `_nopad` suffix appears when `--pad` is off), e.g.:
 ```
-addition_3digit_rev_2025-06-11T14:30:00
-addition_3digit_fwd_2025-06-11T14:35:00
+addition_3digit_fwd_nopad_2025-06-11T14:30:00     # default
+addition_3digit_rev_2025-06-11T14:35:00           # --reverse --pad
 ```
 
-Checkpoint files follow the same tag so the two experiments never overwrite each other:
+Checkpoint files follow the same tag so experiments never overwrite each other:
 ```
+checkpoints/addition_3digit_fwd_nopad_epoch0001.pt
 checkpoints/addition_3digit_rev_epoch0001.pt
-checkpoints/addition_3digit_fwd_epoch0001.pt
 ```
 
 ---
 
 ## Hardware monitoring
 
-System metrics are collected automatically in a background thread and logged alongside training metrics.
+**Off by default.** Two ways to use it:
+
+```bash
+python train.py --monitor    # log sys/* metrics to W&B/MLflow during training
+python monitor.py            # standalone: print live metrics to the console
+sudo python monitor.py       # + GPU power/thermal (powermetrics needs root)
+```
+
+The monitor announces its status on startup (psutil active, powermetrics available or not) instead of failing silently.
 
 ### What gets logged
 
@@ -159,7 +189,7 @@ System metrics are collected automatically in a background thread and logged alo
 echo "$(whoami) ALL = NOPASSWD: /usr/bin/powermetrics" | sudo tee /etc/sudoers.d/powermetrics
 ```
 
-Without this, powermetrics is silently skipped and you still get CPU/RAM/GPU-memory metrics.
+Alternatively just run the standalone monitor with `sudo`. Without root, powermetrics is skipped (with a console notice) and you still get CPU/RAM/GPU-memory metrics.
 
 ### Reading the numbers
 

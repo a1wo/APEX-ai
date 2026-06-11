@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 class TrainConfig:
     # ── task ──────────────────────────────────────────────────────────────────
     ndigits:          int   = 3
-    reverse_c:        bool  = True     # True = ones digit first; False = left-to-right
+    reverse_c:        bool  = False    # True = ones digit first; False = left-to-right
+    pad_c:            bool  = False    # zero-pad c to ndigits+1 digits (fixed-length answer)
 
     # ── model ─────────────────────────────────────────────────────────────────
     n_layer:          int   = 4
@@ -25,8 +26,10 @@ class TrainConfig:
     keep_checkpoints: int   = 3        # prune older files, keep this many
 
     # ── experiment tracking ───────────────────────────────────────────────────
-    use_wandb:        bool  = True     # silently skipped if wandb not installed
-    use_mlflow:       bool  = True     # silently skipped if mlflow not installed
+    use_wandb:        bool  = True     # skipped (with a notice) if wandb not installed
+    use_mlflow:       bool  = True     # skipped (with a notice) if mlflow not installed
+    use_monitor:      bool  = False    # hardware monitor thread (sys/* metrics); also
+                                       # runnable standalone: python monitor.py
 
     # ── derived (read-only) ───────────────────────────────────────────────────
     @property
