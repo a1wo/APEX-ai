@@ -158,7 +158,8 @@ def train(cfg: TrainConfig) -> torch.nn.Module:
             optimizer.step()
             loss_accum += loss.item()
 
-            log({"train/loss": loss.item(), "train/lr": current_lr}, step=step)
+            if step % cfg.log_every == 0:
+                log({"train/loss": loss.item(), "train/lr": current_lr}, step=step)
 
             # ── Eval ──────────────────────────────────────────────────────────
             if step % cfg.eval_every == 0 or step == cfg.max_iters - 1:
@@ -228,6 +229,8 @@ if __name__ == "__main__":
     p.add_argument("--epoch_size",       type=int,   default=TrainConfig.epoch_size)
     p.add_argument("--keep_checkpoints", type=int,   default=TrainConfig.keep_checkpoints)
     # tracking
+    p.add_argument("--log_every",        type=int,   default=TrainConfig.log_every,
+                   help="steps between train/* metric logs (per-step logging bloats trackers)")
     p.add_argument("--no_wandb",         action="store_true")
     p.add_argument("--no_mlflow",        action="store_true")
     p.add_argument("--monitor",          action="store_true",
@@ -251,6 +254,7 @@ if __name__ == "__main__":
         ckpt_dir         = args.ckpt_dir,
         epoch_size       = args.epoch_size,
         keep_checkpoints = args.keep_checkpoints,
+        log_every        = args.log_every,
         use_wandb        = not args.no_wandb,
         use_mlflow       = not args.no_mlflow,
         use_monitor      = args.monitor,

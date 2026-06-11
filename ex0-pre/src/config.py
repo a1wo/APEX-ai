@@ -29,6 +29,8 @@ class TrainConfig:
     keep_checkpoints: int   = 3        # prune older files, keep this many
 
     # ── experiment tracking ───────────────────────────────────────────────────
+    log_every:        int   = 10       # steps between train/* metric logs; per-step
+                                       # logging bloats tracker memory and mlflow.db
     use_wandb:        bool  = True     # skipped (with a notice) if wandb not installed
     use_mlflow:       bool  = True     # skipped (with a notice) if mlflow not installed
     use_monitor:      bool  = False    # hardware monitor thread (system/* metrics); also

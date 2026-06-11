@@ -113,6 +113,7 @@ python train.py --reverse --pad  # reversed, fixed-length (easiest for the model
 | `--model NAME` | `nano` | `nano` (from scratch) or a pretrained HF model (see `src/models/`) |
 | `--resume` | off | continue the latest checkpoint **and** the same W&B/MLflow runs |
 | `--monitor` | off | log hardware metrics (`system/*`) |
+| `--log_every N` | `10` | steps between `train/*` metric logs (1 = every step, bloats trackers) |
 | `--no_wandb` | off | disable W&B logging |
 | `--no_mlflow` | off | disable MLflow logging |
 
