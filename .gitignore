@@ -10,3 +10,8 @@ mlartifacts/
 mlflow.db*
 wandb/
 logs/
+
+# Secrets
+private.pem
+*.pem
+.env

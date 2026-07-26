@@ -1,0 +1,6 @@
+[submodule "architects-ex-1"]
+	path = architects-ex-1
+	url = https://github.com/a1wo/architects-ex-1.git
+[submodule "architects-ex-2"]
+	path = architects-ex-2
+	url = https://github.com/a1wo/architects-ex-2.git
